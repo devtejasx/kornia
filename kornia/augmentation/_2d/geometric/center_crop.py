@@ -58,10 +58,8 @@ class CenterCrop(GeometricAugmentationBase2D):
         ``size`` accepts an integer for a square crop or an
         ``(height, width)`` tuple. The fixed centre crop is shared by every selected image in a batch.
 
-        When the crop is selected, ``cropping_mode="slice"`` indexes the input directly and returns a writable view
-        of it; modifying the result therefore modifies the corresponding centre region of the input. This wart is
-        tracked in
-        `#4413 <https://github.com/kornia/kornia/issues/4413>`_. ``cropping_mode="resample"`` uses
+        When the crop is selected, ``cropping_mode="slice"`` indexes the input directly and returns a copy of the
+        centre region, so modifying the result leaves the input untouched. ``cropping_mode="resample"`` uses
         ``crop_by_transform_mat`` with the configured ``resample`` (bilinear by default), ``align_corners`` (``True``
         by default), and zero padding. Only resample mode supports
         :meth:`inverse`; it resamples onto the original canvas with zero padding by default and cannot restore discarded
@@ -160,11 +158,12 @@ class CenterCrop(GeometricAugmentationBase2D):
             # `int(coord_tensor[i])` indexing break torch.compile fullgraph. The offsets match
             # `center_crop_generator` (`int(dim/2 - size/2)` == `(dim - size) // 2` for size <=
             # dim, which the generator guarantees) and the slice equals the requested size, so
-            # this is byte-identical.
+            # this is byte-identical. Clone so the result does not alias the caller's tensor,
+            # matching RandomCrop / RandomResizedCrop and the resample mode.
             crop_h, crop_w = int(flags["size"][0]), int(flags["size"][1])
             top = (input.shape[-2] - crop_h) // 2
             left = (input.shape[-1] - crop_w) // 2
-            return input[..., top : top + crop_h, left : left + crop_w]
+            return input[..., top : top + crop_h, left : left + crop_w].clone()
         raise NotImplementedError(f"Not supported type: {flags['cropping_mode']}.")
 
     def inverse_transform(

@@ -45,13 +45,16 @@ class TestGeometricCropConventions(BaseTester):
         nearest = K.CenterCrop((4, 4), resample="nearest", align_corners=False, cropping_mode="resample")
         self.assert_close(nearest(x), expected)
 
-    def test_wart_center_crop_slice_aliases_input_4413(self, device, dtype):
-        # #4413: default slice mode returns its direct tensor slice. The write lands at the crop's centre offset.
+    @pytest.mark.parametrize("size", [4, (6, 4), (4, 8)])
+    def test_convention_center_crop_slice_does_not_alias_input_4413(self, device, dtype, size):
+        # #4413: slice mode used to return a view, so writing into the crop corrupted the input.
+        # (6, 4) keeps every row and (4, 8) every column, the two shapes where a slice is contiguous.
         x = torch.arange(48, device=device, dtype=dtype).reshape(1, 1, 6, 8)
-        output = K.CenterCrop(4, cropping_mode="slice")(x)
-        assert output.untyped_storage().data_ptr() == x.untyped_storage().data_ptr()
-        output[0, 0, 0, 0] = -99
-        assert x[0, 0, 1, 2] == -99
+        original = x.clone()
+        output = K.CenterCrop(size, cropping_mode="slice")(x)
+        assert output.untyped_storage().data_ptr() != x.untyped_storage().data_ptr()
+        output.fill_(-99)
+        self.assert_close(x, original)
 
     def test_convention_random_crop_padding_modes_and_inverse(self, device, dtype):
         x = torch.arange(9, device=device, dtype=dtype).reshape(1, 1, 3, 3)
