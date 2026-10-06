@@ -41,8 +41,12 @@ from kornia.core.check import (
 def angle_error_mat(R1: Tensor, R2: Tensor) -> Tensor:
     r"""Geodesic angle (in degrees) between two rotation matrices.
 
-    The relative rotation :math:`R_1^\top R_2` has trace :math:`1 + 2\cos\theta`, so the geodesic
-    angle is :math:`\theta = \arccos\!\big((\mathrm{tr}(R_1^\top R_2) - 1) / 2\big)`.
+    The relative rotation :math:`R = R_1^\top R_2` has trace :math:`1 + 2\cos\theta` and skew part
+    :math:`(R - R^\top) / 2 = \sin\theta\,[n]_\times`, so the geodesic angle is
+    :math:`\theta = \operatorname{atan2}\!\big(\lVert \mathrm{vee}((R - R^\top) / 2) \rVert,
+    (\mathrm{tr}(R) - 1) / 2\big)`. Unlike :math:`\arccos` of the trace, this keeps full precision
+    next to :math:`0^\circ` and :math:`180^\circ`: in ``float32`` the trace alone cannot resolve an
+    angle below about :math:`0.03^\circ`.
 
     Args:
         R1: a rotation matrix of shape :math:`(*, 3, 3)`.
@@ -52,10 +56,8 @@ def angle_error_mat(R1: Tensor, R2: Tensor) -> Tensor:
         the per-matrix angle in degrees, with shape :math:`(*,)`.
 
     .. note::
-        The gradient is infinite/NaN exactly at :math:`0^\circ` and :math:`180^\circ` (identical or
-        opposite rotations), because :math:`\frac{d}{dx}\arccos(x) \to \infty` at :math:`x = \pm 1`.
-        This is inherent to every geodesic/angular metric; it only bites if you backpropagate through
-        a perfect or exactly-opposite match.
+        The angle has a kink at :math:`0^\circ` and :math:`180^\circ` (identical or opposite
+        rotations). There the gradient is the subgradient ``0``, on every supported torch version.
 
     Example:
         >>> angle_error_mat(torch.eye(3), torch.eye(3))
@@ -69,14 +71,19 @@ def angle_error_mat(R1: Tensor, R2: Tensor) -> Tensor:
 
     relative = R1.transpose(-2, -1) @ R2
     trace = relative.diagonal(dim1=-2, dim2=-1).sum(-1)
-    cos_theta = ((trace - 1.0) / 2.0).clamp(-1.0, 1.0)
-    return torch.rad2deg(cos_theta.acos())
+    cos_theta = (trace - 1.0) / 2.0
+    skew = relative - relative.transpose(-2, -1)
+    sin_axis = torch.stack([skew[..., 2, 1], skew[..., 0, 2], skew[..., 1, 0]], dim=-1) / 2.0
+    sin_theta = torch.linalg.vector_norm(sin_axis, dim=-1)
+    return torch.rad2deg(torch.atan2(sin_theta, cos_theta))
 
 
 def angle_error_vec(v1: Tensor, v2: Tensor) -> Tensor:
     r"""Angle (in degrees) between two vectors.
 
-    The angle is :math:`\theta = \arccos\!\big((v_1 \cdot v_2) / (\lVert v_1 \rVert \lVert v_2 \rVert)\big)`.
+    The angle is :math:`\theta = \operatorname{atan2}\!\big(\lVert v_1 \times v_2 \rVert, v_1 \cdot v_2\big)`,
+    which, unlike :math:`\arccos` of the normalized dot product, keeps full precision next to
+    :math:`0^\circ` and :math:`180^\circ`.
 
     Args:
         v1: a vector of shape :math:`(*, 3)`.
@@ -86,10 +93,8 @@ def angle_error_vec(v1: Tensor, v2: Tensor) -> Tensor:
         the per-vector angle in degrees, with shape :math:`(*,)`.
 
     .. note::
-        The gradient is infinite/NaN exactly at :math:`0^\circ` and :math:`180^\circ` (identical or
-        opposite vectors), because :math:`\frac{d}{dx}\arccos(x) \to \infty` at :math:`x = \pm 1`.
-        This is inherent to every geodesic/angular metric; it only bites if you backpropagate through
-        a perfect or exactly-opposite match.
+        The angle has a kink at :math:`0^\circ` and :math:`180^\circ` (parallel or opposite vectors).
+        There the gradient is the subgradient ``0``, on every supported torch version.
 
     .. note::
         A zero-length vector gives ``NaN`` rather than raising, since the angle is undefined there.
@@ -107,9 +112,11 @@ def angle_error_vec(v1: Tensor, v2: Tensor) -> Tensor:
     KORNIA_CHECK_SAME_SHAPE(v1, v2)
 
     dot = (v1 * v2).sum(-1)
-    norms = v1.norm(dim=-1) * v2.norm(dim=-1)
-    cos_theta = (dot / norms).clamp(-1.0, 1.0)
-    return torch.rad2deg(cos_theta.acos())
+    cross = torch.linalg.vector_norm(torch.linalg.cross(v1, v2, dim=-1), dim=-1)
+    angle = torch.rad2deg(torch.atan2(cross, dot))
+    # atan2(0, 0) is 0, but the angle to a zero-length vector is undefined.
+    degenerate = (v1 == 0).all(-1) | (v2 == 0).all(-1)
+    return angle.masked_fill(degenerate, float("nan"))
 
 
 def translation_ate(t: Tensor, t_gt: Tensor) -> Tensor:

@@ -66,6 +66,25 @@ class TestAngleErrorMat(BaseTester):
         R2 = torch.tensor(ROT_Z_90, device=device, dtype=torch.float64)
         self.gradcheck(kornia.metrics.angle_error_mat, (R1, R2), requires_grad=(True, False))
 
+    @pytest.mark.parametrize("degrees", [0.001, 0.01, 0.02, 0.05, 1.0, 179.99])
+    def test_small_and_near_opposite_angles_float32(self, device, degrees):
+        # acos of the trace returned exactly 0 below ~0.03 degrees in float32, and 180 for 179.99.
+        axis_angle = torch.tensor([[0.3, -0.5, 0.8]], device=device, dtype=torch.float64)
+        R1 = kornia.geometry.axis_angle_to_rotation_matrix(axis_angle)
+        delta = torch.tensor([[0.0, 0.0, math.radians(degrees)]], device=device, dtype=torch.float64)
+        R2 = R1 @ kornia.geometry.axis_angle_to_rotation_matrix(delta)
+        out = kornia.metrics.angle_error_mat(R1.float(), R2.float())
+        expected = torch.tensor([degrees], device=device, dtype=torch.float32)
+        self.assert_close(out, expected, rtol=1e-3, atol=1e-4)
+
+    @pytest.mark.parametrize("rot", [None, [[1.0, 0.0, 0.0], [0.0, -1.0, 0.0], [0.0, 0.0, -1.0]]])
+    def test_gradient_at_kinks_is_zero(self, device, rot):
+        # Identical (0 deg) and opposite (180 deg) rotations: subgradient 0, not inf/nan.
+        R1 = torch.eye(3, device=device, dtype=torch.float32, requires_grad=True)
+        R2 = torch.eye(3, device=device) if rot is None else torch.tensor(rot, device=device)
+        kornia.metrics.angle_error_mat(R1, R2).backward()
+        self.assert_close(R1.grad, torch.zeros_like(R1))
+
     def test_mismatched_batch_raises(self, device, dtype):
         # A batch of 1 against a batch of 4 used to broadcast instead of raising.
         R1 = torch.eye(3, device=device, dtype=dtype).expand(1, 3, 3)
@@ -95,6 +114,27 @@ class TestAngleErrorVec(BaseTester):
         zero = torch.zeros(3, device=device, dtype=dtype)
         unit = torch.tensor([1.0, 0.0, 0.0], device=device, dtype=dtype)
         assert torch.isnan(kornia.metrics.angle_error_vec(zero, unit))
+
+    @pytest.mark.parametrize("degrees", [0.01, 0.05, 0.1, 179.99])
+    def test_small_and_near_opposite_angles_float32(self, device, degrees):
+        v1 = torch.tensor([0.0, 0.6, 0.8], device=device, dtype=torch.float64)
+        theta = math.radians(degrees)
+        rot_x = torch.tensor(
+            [[1.0, 0.0, 0.0], [0.0, math.cos(theta), -math.sin(theta)], [0.0, math.sin(theta), math.cos(theta)]],
+            device=device,
+            dtype=torch.float64,
+        )
+        v2 = rot_x @ v1
+        out = kornia.metrics.angle_error_vec(v1.float(), v2.float())
+        expected = torch.tensor(degrees, device=device, dtype=torch.float32)
+        self.assert_close(out, expected, rtol=1e-3, atol=1e-4)
+
+    def test_gradient_at_kinks_is_zero(self, device):
+        x = torch.tensor([1.0, 0.0, 0.0], device=device)
+        for target in (x, -x):
+            v1 = x.clone().requires_grad_(True)
+            kornia.metrics.angle_error_vec(v1, target).backward()
+            self.assert_close(v1.grad, torch.zeros_like(v1))
 
     def test_mismatched_batch_raises(self, device, dtype):
         # A batch of 1 against a batch of 5 used to broadcast instead of raising.
