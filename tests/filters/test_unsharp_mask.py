@@ -62,6 +62,22 @@ class Testunsharp(BaseTester):
         self.assert_close(actual, expected)
         self.assert_close(UnsharpMask((5, 5), (1.5, 1.5))(data), expected)
 
+    def test_mixed_precision_region_keeps_input_dtype_6182(self, device: torch.device) -> None:
+        # Inside autocast the blur returns the autocast dtype; the float32 image must not make torch.lerp raise.
+        if device.type not in ("cpu", "cuda", "mps"):
+            pytest.skip("CPU/CUDA/MPS autocast regression")
+        generator = torch.Generator().manual_seed(0)
+        data = torch.rand(2, 3, 9, 13, generator=generator).to(device)
+        expected = unsharp_mask(data, (3, 3), (1.5, 1.5))
+        for autocast_dtype in (torch.bfloat16, torch.float16):
+            with torch.autocast(device_type=device.type, dtype=autocast_dtype):
+                actual = unsharp_mask(data, (3, 3), (1.5, 1.5))
+                actual_module = UnsharpMask((3, 3), (1.5, 1.5))(data)
+            assert actual.dtype == torch.float32
+            self.assert_close(actual_module, actual)
+            # The blur is rounded to the autocast dtype and amplified by the -1 gain of the formula.
+            self.assert_close(actual, expected, rtol=0.0, atol=1e-2)
+
     @pytest.mark.skip(reason="nothing to test")
     def test_exception(self): ...
 

@@ -63,7 +63,8 @@ def unsharp_mask(
     """
     input = _to_floating(input)
     data_blur: torch.Tensor = gaussian_blur2d(input, kernel_size, sigma, border_type)
-    return torch.lerp(data_blur, input, weight=2.0)
+    # Autocast runs the blur in its own dtype; torch.lerp needs both operands in one dtype.
+    return torch.lerp(data_blur.to(input.dtype), input, weight=2.0)
 
 
 class UnsharpMask(nn.Module):
