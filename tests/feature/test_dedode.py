@@ -25,6 +25,7 @@ from kornia.feature.dedode import DeDoDe
 from kornia.feature.dedode.decoder import ConvRefiner
 from kornia.feature.dedode.transformer.dinov2 import DinoVisionTransformer
 from kornia.feature.dedode.transformer.layers import MemEffAttention, NestedTensorBlock
+from kornia.feature.dedode.transformer.layers.drop_path import DropPath
 from kornia.feature.dedode.transformer.layers.patch_embed import PatchEmbed
 from kornia.feature.dedode.utils import dedode_denormalize_pixel_coordinates
 
@@ -62,6 +63,14 @@ class TestMemEffAttention(BaseTester):
 
         with pytest.raises(NotImplementedError, match="attn_bias is not supported"):
             attention(x, attn_bias=torch.zeros(1, 2, 5, 5, device=device, dtype=dtype))
+
+
+class TestDropPath(BaseTester):
+    def test_default_prob_is_identity_in_training(self, device, dtype):
+        # DropPath() defaults to drop_prob=None, which means no drop
+        layer = DropPath().train()
+        x = torch.rand(2, 3, 4, device=device, dtype=dtype)
+        self.assert_close(layer(x), x)
 
 
 class TestPatchEmbed(BaseTester):

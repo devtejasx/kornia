@@ -33,7 +33,7 @@ from torch import nn
 def drop_path(x: torch.Tensor, drop_prob: Optional[float] = 0.0, training: bool = False) -> torch.Tensor:
     """Apply stochastic depth sampling."""
     if drop_prob is None:
-        drop_path = 0.0
+        drop_prob = 0.0
     if drop_prob == 0.0 or not training:
         return x
     keep_prob = 1.0 - drop_prob
